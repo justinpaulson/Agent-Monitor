@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Monitor simulator</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+         gap: 20px; background: #16161a; color: #c8c8d2; font: 14px/1.4 -apple-system, system-ui, sans-serif; }
+  .bezel { padding: 14px; border-radius: 50%; background: #2a2a31; box-shadow: 0 8px 30px #0008; }
+  canvas { display: block; width: 240px; height: 240px; border-radius: 50%; background: #000; cursor: pointer; touch-action: none; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 560px; padding: 0 16px; }
+  button { background: #2a2a31; color: inherit; border: 1px solid #44444e; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  button:hover { background: #34343d; }
+  #status, .hint { color: #80808c; font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="bezel"><canvas id="c" width="480" height="480"></canvas></div>
+<div class="hint">Drag sideways (or press ← →) to switch between Claude and Codex. Click to step through sessions.</div>
+<div class="row">
+  <button data-demo="start">+ Claude session</button>
+  <button data-demo="startx">+ Codex session</button>
+  <button data-demo="work">Working</button>
+  <button data-demo="ask">Needs approval</button>
+  <button data-demo="done">Done</button>
+  <button data-demo="end">End session</button>
+  <button data-demo="usage">Random usage</button>
+</div>
+<div id="status"></div>
+<script>
+// Mirrors firmware/src/main.cpp so the look can be tuned without hardware.
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+ctx.scale(2, 2);
+const CX = 120, CY = 120;
+const AGENTS = ['c', 'x'];
+const ACCENT = { c: [217, 119, 87], x: [25, 195, 160] };
+// Agent logos as SVG outlines on a 24x24 grid (from the Simple Icons set).
+// The firmware uses bitmaps made from these by exportLogoHeader() below.
+const LOGO_SIZE = 26;
+const LOGO_PATH = {
+  c: 'm4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z',
+  x: 'M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z',
+};
+const LOGO_COLOR = { c: [217, 119, 87], x: [255, 255, 255] };
+const STATE_RGB = { a: [255, 176, 0], w: [70, 150, 255], d: [60, 210, 110], i: [110, 110, 122] };
+
+let sessions = [], usage = { c: [-1, -1], x: [-1, -1] };
+let lastMessageAt = 0, everConnected = false;
+let page = 0, detailIndex = -1, detailShownAt = 0;
+let hadAttention = { c: false, x: false };
+
+const pulse = (now, period) => 0.5 + 0.5 * Math.sin((now % period) / period * 2 * Math.PI);
+const rgb = ([r, g, b], k = 1) => `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
+const stateWord = (s) => ({ a: 'NEEDS YOU', w: 'WORKING', d: 'DONE' }[s] || 'IDLE');
+const forAgent = (agent) => sessions.filter((s) => s[0] === agent);
+const needsAttention = (agent) => sessions.some((s) => s[0] === agent && s[1] === 'a');
+
+function arc(r0, r1, a0, a1, color) {
+  const rad = (d) => d * Math.PI / 180;
+  ctx.beginPath();
+  ctx.arc(CX, CY, r0, rad(a0), rad(a1));
+  ctx.arc(CX, CY, r1, rad(a1), rad(a0), true);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+function text(str, y, font, color) {
+  ctx.font = font;
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(str, CX, y);
+}
+function drawLogo(target, agent, cx, cy, color) {
+  target.save();
+  target.translate(cx - LOGO_SIZE / 2, cy - LOGO_SIZE / 2);
+  target.scale(LOGO_SIZE / 24, LOGO_SIZE / 24);
+  target.fillStyle = color;
+  target.fill(new Path2D(LOGO_PATH[agent]));
+  target.restore();
+}
+
+// Developer helper: open this page with #export on the end of the address and
+// save the text it shows as firmware/src/logos.h after changing a logo or LOGO_SIZE.
+function exportLogoHeader() {
+  const names = { c: 'LOGO_CLAUDE', x: 'LOGO_CODEX' };
+  let out = `// Generated by exportLogoHeader() in daemon/sim.html. Do not edit by hand.\n` +
+    `// ${LOGO_SIZE}x${LOGO_SIZE} coverage maps, one byte per pixel (0 = empty, 255 = solid).\n` +
+    `#pragma once\n#include <stdint.h>\n\nstatic const int LOGO_SIZE = ${LOGO_SIZE};\n`;
+  for (const agent of AGENTS) {
+    const off = document.createElement('canvas');
+    off.width = off.height = LOGO_SIZE;
+    const octx = off.getContext('2d');
+    drawLogo(octx, agent, LOGO_SIZE / 2, LOGO_SIZE / 2, '#fff');
+    const px = octx.getImageData(0, 0, LOGO_SIZE, LOGO_SIZE).data;
+    out += `\nstatic const uint8_t ${names[agent]}[${LOGO_SIZE * LOGO_SIZE}] = {\n`;
+    for (let y = 0; y < LOGO_SIZE; y++) {
+      const row = [];
+      for (let x = 0; x < LOGO_SIZE; x++) row.push(px[(y * LOGO_SIZE + x) * 4 + 3]);
+      out += '  ' + row.join(',') + ',\n';
+    }
+    out += '};\n';
+  }
+  return out;
+}
+
+const BOLD = 'bold 13px Helvetica, Arial, sans-serif', REG = '13px Helvetica, Arial, sans-serif', SMALL = '11px Helvetica, Arial, sans-serif';
+const TRACK = [38, 38, 44], GREY = [130, 130, 145], RED = [235, 70, 60];
+
+// One usage ring: a dim full track with what is left of the allowance drawn
+// over it. It starts full and drains back toward 12 o'clock as usage grows.
+function usageRing(r0, r1, used, color) {
+  arc(r0, r1, 0, 360, rgb(TRACK));
+  const left = 100 - Math.min(Math.max(used, 0), 100);
+  if (left > 0) arc(r0, r1, -90, -90 + left * 3.6, left <= 10 ? rgb(RED) : color);
+}
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
+  return `${Math.floor(seconds / 3600)}h ${String(Math.floor(seconds % 3600 / 60)).padStart(2, '0')}m`;
+}
+function formatCount(n) {
+  if (n < 1000) return String(n);
+  if (n < 1e6) return `${(n / 1000).toFixed(1)}k`;
+  return `${(n / 1e6).toFixed(2)}M`;
+}
+
+function drawPage(now) {
+  const agent = AGENTS[page], accent = ACCENT[agent];
+  const [week, session] = usage[agent];
+  const mine = forAgent(agent);
+
+  if (week >= 0) usageRing(119, 111, week, rgb(accent));
+  else arc(119, 111, 0, 360, rgb(TRACK));
+  if (session >= 0) usageRing(107, 101, session, rgb(accent, 0.65));
+
+  if (detailIndex >= 0 && mine[detailIndex]) {
+    const s = mine[detailIndex];
+    text(`${detailIndex + 1} / ${mine.length}`, 50, REG, rgb(GREY));
+    text(s[2], 76, BOLD, '#fff');
+    text(stateWord(s[1]), 98, BOLD, rgb(STATE_RGB[s[1]] || STATE_RGB.i));
+    // Session totals: time spent working, tokens, files changed and tool calls.
+    const [, , , seconds, tokens, files, tools] = s;
+    const stats = [];
+    if (seconds > 0) stats.push(formatDuration(seconds));
+    if (tokens >= 0) stats.push(`${formatCount(tokens)} tokens`);
+    if (tools > 0) stats.push(`${files} ${files === 1 ? 'file' : 'files'}   ${tools} ${tools === 1 ? 'tool' : 'tools'}`);
+    stats.forEach((line, i) => text(line, 126 + i * 22, REG, rgb([190, 190, 205])));
+  } else {
+    drawLogo(ctx, agent, CX, 56, rgb(LOGO_COLOR[agent]));
+    if (mine.length === 0) {
+      text('ALL QUIET', 108, BOLD, rgb([150, 150, 165]));
+      text('no sessions', 132, REG, rgb([100, 100, 115]));
+    } else {
+      const state = ['a', 'w', 'd', 'i'].find((st) => mine.some((s) => s[1] === st));
+      const matching = mine.filter((s) => s[1] === state);
+      // A slow, soft glow instead of a flash when something is waiting on you.
+      if (state === 'a') arc(97, 94, 0, 360, rgb(STATE_RGB.a, 0.45 + 0.55 * pulse(now, 4000)));
+      text(String(matching.length), 96, 'bold 50px Helvetica, Arial, sans-serif', state === 'a' ? rgb(STATE_RGB.a) : '#fff');
+      text(stateWord(state), 134, BOLD, rgb(STATE_RGB[state]));
+      text(matching.length === 1 ? matching[0][2] : `${mine.length} sessions`, 156, REG, rgb([170, 170, 185]));
+    }
+  }
+
+  const parts = [];
+  if (week >= 0) parts.push(`wk ${100 - week}%`);
+  if (session >= 0) parts.push(`5h ${100 - session}%`);
+  const showingDetail = detailIndex >= 0 && mine[detailIndex];
+  if (parts.length && !showingDetail) text(parts.join('   '), 181, SMALL, rgb(GREY));
+
+  // Page dots; a dot turns amber when that agent is waiting on you.
+  AGENTS.forEach((a, i) => {
+    ctx.beginPath();
+    ctx.arc(CX - 7 + i * 14, 203, 3, 0, 2 * Math.PI);
+    ctx.fillStyle = needsAttention(a) ? rgb(STATE_RGB.a) : i === page ? '#fff' : rgb([70, 70, 80]);
+    ctx.fill();
+  });
+}
+
+function render() {
+  const now = performance.now();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, 240, 240);
+  const linked = everConnected && now - lastMessageAt < 10000;
+  if (detailIndex >= 0 && now - detailShownAt > 10000) detailIndex = -1;
+
+  if (!linked) {
+    arc(119, 115, 0, 360, rgb([120, 120, 140], 0.25 + 0.5 * pulse(now, 3000)));
+    text('AGENT MONITOR', 100, BOLD, rgb([220, 220, 230]));
+    text(everConnected ? 'lost connection' : 'waiting for Mac', 130, REG, rgb(GREY));
+  } else {
+    drawPage(now);
+  }
+  requestAnimationFrame(render);
+}
+
+function switchPage() {
+  page = (page + 1) % AGENTS.length;
+  detailIndex = -1;
+}
+function tap() {
+  const count = forAgent(AGENTS[page]).length;
+  if (!count) return;
+  detailIndex = detailIndex + 1 >= count ? -1 : detailIndex + 1;
+  detailShownAt = performance.now();
+}
+
+// Jump to an agent's page when it starts waiting on you, unless the page
+// you are looking at is waiting too.
+function followAttention() {
+  AGENTS.forEach((a, i) => {
+    const now = needsAttention(a);
+    if (now && !hadAttention[a] && !needsAttention(AGENTS[page])) {
+      page = i;
+      detailIndex = -1;
+    }
+    hadAttention[a] = now;
+  });
+}
+
+let downX = null;
+canvas.addEventListener('pointerdown', (e) => { downX = e.clientX; canvas.setPointerCapture(e.pointerId); });
+canvas.addEventListener('pointerup', (e) => {
+  if (downX === null) return;
+  if (Math.abs(e.clientX - downX) > 40) switchPage(); else tap();
+  downX = null;
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') switchPage(); });
+
+async function poll() {
+  try {
+    const data = await (await fetch('/state')).json();
+    sessions = data.wire.s;
+    usage = data.wire.u;
+    lastMessageAt = performance.now();
+    everConnected = true;
+    followAttention();
+    if (detailIndex >= forAgent(AGENTS[page]).length) detailIndex = -1;
+    document.getElementById('status').textContent =
+      data.device ? `Device connected: ${data.device}` : 'No device connected (simulator only)';
+  } catch {
+    document.getElementById('status').textContent = 'Daemon not reachable';
+  }
+}
+setInterval(poll, 500);
+poll();
+
+// Demo buttons post fake hook events and usage numbers.
+let demoCount = 0, demoIds = [];
+const post = (path, agent, body) => fetch(`${path}?agent=${agent}`, { method: 'POST', body: JSON.stringify(body) }).then(poll);
+const rand = () => Math.floor(Math.random() * 100);
+document.querySelectorAll('[data-demo]').forEach((b) => b.addEventListener('click', () => {
+  const kind = b.dataset.demo;
+  if (kind === 'usage') {
+    const later = Math.floor(Date.now() / 1000) + 3600;
+    post('/usage', 'claude', { demo: true, rate_limits: { five_hour: { used_percentage: rand(), resets_at: later }, seven_day: { used_percentage: rand(), resets_at: later } } });
+    return post('/usage', 'codex', { demo: true, rate_limits: { seven_day: { used_percentage: rand(), resets_at: later } } });
+  }
+  if (kind === 'start' || kind === 'startx') {
+    const id = `demo-${++demoCount}`, agent = kind === 'startx' ? 'codex' : 'claude';
+    demoIds.push({ id, agent });
+    return post('/event', agent, { session_id: id, hook_event_name: 'SessionStart', cwd: `/demo/project-${demoCount}` });
+  }
+  const last = demoIds[demoIds.length - 1];
+  if (!last) return;
+  const hook = { work: 'UserPromptSubmit', ask: 'PermissionRequest', done: 'Stop', end: 'SessionEnd' }[kind];
+  if (kind === 'end') demoIds.pop();
+  post('/event', last.agent, { session_id: last.id, hook_event_name: hook });
+  // Give demo sessions some activity so the detail view has numbers to show.
+  if (kind === 'work') {
+    post('/event', last.agent, { session_id: last.id, hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: `/demo/file-${rand() % 5}.js` } });
+  }
+}));
+
+if (location.hash === '#export') {
+  document.body.innerHTML = '<pre id="export"></pre>';
+  document.getElementById('export').textContent = exportLogoHeader();
+} else {
+  requestAnimationFrame(render);
+}
+</script>
+</body>
+</html>

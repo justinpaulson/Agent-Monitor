@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "agent-monitor-daemon",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["daemon/server.mjs"],
+      "port": 47800
+    }
+  ]
+}
